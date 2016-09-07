@@ -35,115 +35,112 @@ echo "Branch: $branchName"
 echo "Publish newman artifacts: " + shouldPublishPrivateArtifacts
 echo "Newman tags: " + newmanTags
 
-String zeppelinRepo = "https://\$USERNAME:\$PASSWORD@github.com/giga-dev/insightedge-zeppelin.git"
+String zeppelinRepo = "git@github.com:giga-dev/insightedge-zeppelin.git"
 String zeppelinDefaultBranchName = "master"
 
-String examplesRepo = "https://\$USERNAME:\$PASSWORD@github.com/giga-dev/insightedge-examples.git"
+String examplesRepo = "git@github.com:giga-dev/insightedge-examples.git"
 String examplesDefaultBranchName = "master"
 
 sh 'git log -1 --format="%H" > temp-git-commit-hash'
 String commitHash = readFile("temp-git-commit-hash").trim()
 echo "Commit: $commitHash"
 
-withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'insightedge-dev', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
 
-    stage 'Build insightedge'
+stage 'Build insightedge'
+try {
+    load 'tools/build.groovy'
+} finally {
+    step([$class: 'JUnitResultArchiver', testResults: 'insightedge-core/target/surefire-reports/TEST-*.xml'])
+}
+
+
+stage 'Checkout zeppelin'
+String zeppelinBranchName = getBranchOrDefault(zeppelinRepo, branchName, zeppelinDefaultBranchName)
+echo "Using $zeppelinBranchName branch for Zeppelin"
+sh "rm -r zeppelin || :"
+sh "git clone -b $zeppelinBranchName --single-branch $zeppelinRepo zeppelin/$zeppelinBranchName"
+
+
+stage 'Build zeppelin'
+dir("zeppelin/$zeppelinBranchName") {
+    load 'tools/build.groovy'
+}
+
+stage 'Checkout examples'
+String examplesBranchName = getBranchOrDefault(examplesRepo, branchName, examplesDefaultBranchName)
+echo "Using $examplesBranchName branch for examples"
+sh "rm -r examples || :"
+sh "git clone -b $examplesBranchName --single-branch $examplesRepo examples/$examplesBranchName"
+
+
+stage 'Build examples'
+dir("examples/$examplesBranchName") {
+    load 'tools/build.groovy'
+}
+
+
+stage 'Package insightedge'
+distributions = "-Ddist.spark=$env.SPARK_DIST"
+distributions = "$distributions -Ddist.zeppelin=zeppelin/$zeppelinBranchName/zeppelin-distribution/target/zeppelin-0.6.1-SNAPSHOT.tar.gz"
+distributions = "$distributions -Ddist.examples=examples/$examplesBranchName/target/insightedge-examples-all.zip"
+premiumDist = "$distributions -Ddist.xap=" + xapPremiumUrl
+communityDist = "$distributions -Ddist.xap=" + xapOpenUrl
+sh "mvn package -pl insightedge-packager -P package-premium   -DskipTests=true $premiumDist   -Dlast.commit.hash=$commitHash"
+sh "mvn package -pl insightedge-packager -P package-community -DskipTests=true $communityDist -Dlast.commit.hash=$commitHash"
+
+
+stage 'Export artifacts'
+archive 'insightedge-packager/target/community/gigaspaces-*.zip'
+archive 'insightedge-packager/target/premium/gigaspaces-*.zip'
+
+if (shouldPublishPrivateArtifacts) {
+    stage 'Publish private artifacts to remote disk'
+    String publishSystemProps = "-Dinsightedge.branch=" + branchName + " -Dinsightedge.build.number=" + buildNumber + " -Dnewman.tags=" + newmanTags
+    sh "mvn package -pl insightedge-packager -P publish-artifacts  -DskipTests=true " + publishSystemProps
+}
+else {
+    stage 'Synchronize integration tests'
+    String lockMessage = "branch=$branchName;commit=$commitHash"
+    sh "chmod +x tools/lock.sh"
+    sh "chmod +x tools/unlock.sh"
+    // lock with 15 minutes timeout - expected time for integration tests to be finished
+    sh "tools/lock.sh /tmp/integration-tests.lock 900 30 \"$lockMessage\""
+
     try {
-        load 'tools/build.groovy'
-    } finally {
-        step([$class: 'JUnitResultArchiver', testResults: 'insightedge-core/target/surefire-reports/TEST-*.xml'])
-    }
-
-
-    stage 'Checkout zeppelin'
-    String zeppelinBranchName = getBranchOrDefault(zeppelinRepo, branchName, zeppelinDefaultBranchName)
-    echo "Using $zeppelinBranchName branch for Zeppelin"
-    sh "rm -r zeppelin || :"
-    sh "git clone -b $zeppelinBranchName --single-branch $zeppelinRepo zeppelin/$zeppelinBranchName"
-
-
-    stage 'Build zeppelin'
-    dir("zeppelin/$zeppelinBranchName") {
-        load 'tools/build.groovy'
-    }
-
-
-    stage 'Checkout examples'
-    String examplesBranchName = getBranchOrDefault(examplesRepo, branchName, examplesDefaultBranchName)
-    echo "Using $examplesBranchName branch for examples"
-    sh "rm -r examples || :"
-    sh "git clone -b $examplesBranchName --single-branch $examplesRepo examples/$examplesBranchName"
-
-
-    stage 'Build examples'
-    dir("examples/$examplesBranchName") {
-        load 'tools/build.groovy'
-    }
-
-
-    stage 'Package insightedge'
-    distributions = "-Ddist.spark=$env.SPARK_DIST"
-    distributions = "$distributions -Ddist.zeppelin=zeppelin/$zeppelinBranchName/zeppelin-distribution/target/zeppelin-0.6.1-SNAPSHOT.tar.gz"
-    distributions = "$distributions -Ddist.examples=examples/$examplesBranchName/target/insightedge-examples-all.zip"
-    premiumDist = "$distributions -Ddist.xap=" + xapPremiumUrl
-    communityDist = "$distributions -Ddist.xap=" + xapOpenUrl
-    sh "mvn package -pl insightedge-packager -P package-premium   -DskipTests=true $premiumDist   -Dlast.commit.hash=$commitHash"
-    sh "mvn package -pl insightedge-packager -P package-community -DskipTests=true $communityDist -Dlast.commit.hash=$commitHash"
-
-
-    stage 'Export artifacts'
-    archive 'insightedge-packager/target/community/gigaspaces-*.zip'
-    archive 'insightedge-packager/target/premium/gigaspaces-*.zip'
-
-    if (shouldPublishPrivateArtifacts) {
-        stage 'Publish private artifacts to remote disk'
-        String publishSystemProps = "-Dinsightedge.branch=" + branchName + " -Dinsightedge.build.number=" + buildNumber + " -Dnewman.tags=" + newmanTags
-        sh "mvn package -pl insightedge-packager -P publish-artifacts  -DskipTests=true " + publishSystemProps
-    }
-    else {
-        stage 'Synchronize integration tests'
-        String lockMessage = "branch=$branchName;commit=$commitHash"
-        sh "chmod +x tools/lock.sh"
-        sh "chmod +x tools/unlock.sh"
-        // lock with 15 minutes timeout - expected time for integration tests to be finished
-        sh "tools/lock.sh /tmp/integration-tests.lock 900 30 \"$lockMessage\""
+        try {
+            stage 'Run integration tests (community)'
+            sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community -e"
+        } finally {
+            step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
+        }
 
         try {
-            try {
-                stage 'Run integration tests (community)'
-                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community -e"
-            } finally {
-                step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
-            }
-
-            try {
-                stage 'Run integration tests (premium)'
-                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium -e"
-            } finally {
-                step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
-            }
-
-            if (branchName.equals("master") || branchName.startsWith("branch-")) {
-                try {
-                    stage 'Run long integration tests (community)'
-                    sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community,only-long-running-test -e"
-                } finally {
-                    step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
-                }
-
-                try {
-                    stage 'Run long integration tests (premium)'
-                    sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium,only-long-running-test -e"
-                } finally {
-                    step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
-                }
-            } else {
-                echo 'Skip long running integration tests'
-            }
-
+            stage 'Run integration tests (premium)'
+            sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium -e"
         } finally {
-            // if tests fail - unlock the lock anyway
-            sh "tools/unlock.sh /tmp/integration-tests.lock \"$lockMessage\""
+            step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
         }
+
+        if (branchName.equals("master") || branchName.startsWith("branch-")) {
+            try {
+                stage 'Run long integration tests (community)'
+                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community,only-long-running-test -e"
+            } finally {
+                step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
+            }
+
+            try {
+                stage 'Run long integration tests (premium)'
+                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium,only-long-running-test -e"
+            } finally {
+                step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
+            }
+        } else {
+            echo 'Skip long running integration tests'
+        }
+
+    } finally {
+        // if tests fail - unlock the lock anyway
+        sh "tools/unlock.sh /tmp/integration-tests.lock \"$lockMessage\""
     }
 }

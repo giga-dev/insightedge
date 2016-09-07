@@ -24,8 +24,9 @@ echo "version=${version}"
 buildNumber=${buildNumber}
 echo "buildNumber=${buildNumber}"
 
+base_path="/home/giga/backup-store/insightedge"
 build_path="${version}/${branch}/${buildNumber}"
-path_on_server="/home/giga/backup-store/insightedge/$build_path"
+path_on_server="${base_path}/${build_path}"
 
 communityZipFilePath=${baseOutputFolder}/community/${communityZipFileName}
 premiumZipFilePath=${baseOutputFolder}/premium/${premiumZipFileName}
@@ -38,7 +39,8 @@ ls -l ${premiumZipFilePath}
 
 echo "creating dir in server - [$path_on_server]"
 ssh ${user}@${host} mkdir -p ${path_on_server}
-ssh ${user}@${host} chown -R "${user}:domain\ users" ${path_on_server}
+ssh ${user}@${host} chown -R "${user}:domain\ users" ${base_path}/${version}
+ssh ${user}@${host} chmod -R 755 ${base_path}/${version}
 
 echo "coping resources to: [$host] to folder in server:[${path_on_server}]"
 scp ${communityZipFilePath} ${premiumZipFilePath} ${baseOutputFolder}/*.json ${baseOutputFolder}/integration-tests-sources.zip ${baseOutputFolder}/metadata.txt ${baseOutputFolder}/newman-artifacts.zip ${user}@${host}:${path_on_server}
