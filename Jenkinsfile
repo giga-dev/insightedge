@@ -1,4 +1,5 @@
 node {
+    properties ( [pipelineTriggers([]), [$class: 'ParametersDefinitionProperty', parameterDefinitions: [[$class: 'TextParameterDefinition', defaultValue: 'https://gigaspaces-repository-eu.s3.amazonaws.com/com/gigaspaces/xap-open/12.0.0/12.0.0/gigaspaces-xap-open-12.0.0-ga-b16000.zip', description: 'XAP open source edition valid downloadable URL (zip file)', name: 'XAP_OPEN_URL'], [$class: 'TextParameterDefinition', defaultValue: 'http://192.168.10.10/12.0.0/12.0.0-ga/16000/gigaspaces-xap-premium-12.0.0-ga-b16000.zip', description: 'XAP premium edition valid downloadable URL (zip file)', name: 'XAP_PREMIUM_URL'], [$class: 'TextParameterDefinition', defaultValue: '10000', description: 'Base InsightEdge build number', name: 'INSIGHTEDGE_BUILD_NUMBER'], [$class: 'TextParameterDefinition', defaultValue: 'INSIGHTEDGE', description: 'Newman tags list divided by comma', name: 'NEWMAN_TAGS'], [$class: 'BooleanParameterDefinition', defaultValue: false, description: 'True if one would like to publish the artifacts to remote disk (not public)', name: 'PUBLISH_NEWMAN_ARTIFACTS']]]] )
     stage 'Checkout insightedge'
     checkout scm
     load 'tools/jenkins.groovy'

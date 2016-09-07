@@ -17,22 +17,33 @@ def String getBranchOrDefault(String repo, String targetBranch, String defaultBr
     }
 }
 
+def String calcBuildNumber() {
+    return INSIGHTEDGE_BUILD_NUMBER + "-" + "$env.BUILD_NUMBER".toString()
+}
 
 String branchName = "$env.BRANCH_NAME".toString()
+String xapOpenUrl = XAP_OPEN_URL
+String xapPremiumUrl = XAP_PREMIUM_URL
+String buildNumber = calcBuildNumber()
+boolean shouldPublishPrivateArtifacts = PUBLISH_NEWMAN_ARTIFACTS.toBoolean()
+String newmanTags = NEWMAN_TAGS
 
-String zeppelinRepo = "https://\$USERNAME:\$PASSWORD@github.com/InsightEdge/insightedge-zeppelin.git"
+echo "XAP open URL: " + xapOpenUrl
+echo "XAP premium URL: " + xapPremiumUrl
+echo "InsightEdge build number: " + buildNumber
+echo "Branch: $branchName"
+echo "Publish newman artifacts: " + shouldPublishPrivateArtifacts
+echo "Newman tags: " + newmanTags
+
+String zeppelinRepo = "https://\$USERNAME:\$PASSWORD@github.com/giga-dev/insightedge-zeppelin.git"
 String zeppelinDefaultBranchName = "master"
 
-String examplesRepo = "https://\$USERNAME:\$PASSWORD@github.com/InsightEdge/insightedge-examples.git"
+String examplesRepo = "https://\$USERNAME:\$PASSWORD@github.com/giga-dev/insightedge-examples.git"
 String examplesDefaultBranchName = "master"
 
-echo "Branch: $branchName"
 sh 'git log -1 --format="%H" > temp-git-commit-hash'
 String commitHash = readFile("temp-git-commit-hash").trim()
 echo "Commit: $commitHash"
-
-env.PATH = "${tool 'maven-3.3.9'}/bin:$env.PATH"
-env.PATH = "${tool 'sbt-0.13.11'}/bin:$env.PATH"
 
 withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'insightedge-dev', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
 
@@ -74,8 +85,8 @@ withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'insigh
     distributions = "-Ddist.spark=$env.SPARK_DIST"
     distributions = "$distributions -Ddist.zeppelin=zeppelin/$zeppelinBranchName/zeppelin-distribution/target/zeppelin-0.6.1-SNAPSHOT.tar.gz"
     distributions = "$distributions -Ddist.examples=examples/$examplesBranchName/target/insightedge-examples-all.zip"
-    premiumDist = "$distributions -Ddist.xap=$env.XAP_DIST_HOME/gigaspaces-xap-premium-12.0.0-ga-b16000.zip"
-    communityDist = "$distributions -Ddist.xap=$env.XAP_DIST_HOME/gigaspaces-xap-open-12.0.0-ga-b16000.zip"
+    premiumDist = "$distributions -Ddist.xap=" + xapPremiumUrl
+    communityDist = "$distributions -Ddist.xap=" + xapOpenUrl
     sh "mvn package -pl insightedge-packager -P package-premium   -DskipTests=true $premiumDist   -Dlast.commit.hash=$commitHash"
     sh "mvn package -pl insightedge-packager -P package-community -DskipTests=true $communityDist -Dlast.commit.hash=$commitHash"
 
@@ -84,49 +95,55 @@ withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'insigh
     archive 'insightedge-packager/target/community/gigaspaces-*.zip'
     archive 'insightedge-packager/target/premium/gigaspaces-*.zip'
 
-
-    stage 'Synchronize integration tests'
-    String lockMessage = "branch=$branchName;commit=$commitHash"
-    sh "chmod +x tools/lock.sh"
-    sh "chmod +x tools/unlock.sh"
-    // lock with 15 minutes timeout - expected time for integration tests to be finished
-    sh "tools/lock.sh /tmp/integration-tests.lock 900 30 \"$lockMessage\""
-
-    try {
-        try {
-            stage 'Run integration tests (community)'
-            sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community -e"
-        } finally {
-            step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
-        }
+    if (shouldPublishPrivateArtifacts) {
+        stage 'Publish private artifacts to remote disk'
+        String publishSystemProps = "-Dinsightedge.branch=" + branchName + " -Dinsightedge.build.number=" + buildNumber + " -Dnewman.tags=" + newmanTags
+        sh "mvn package -pl insightedge-packager -P publish-artifacts  -DskipTests=true " + publishSystemProps
+    }
+    else {
+        stage 'Synchronize integration tests'
+        String lockMessage = "branch=$branchName;commit=$commitHash"
+        sh "chmod +x tools/lock.sh"
+        sh "chmod +x tools/unlock.sh"
+        // lock with 15 minutes timeout - expected time for integration tests to be finished
+        sh "tools/lock.sh /tmp/integration-tests.lock 900 30 \"$lockMessage\""
 
         try {
-            stage 'Run integration tests (premium)'
-            sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium -e"
-        } finally {
-            step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
-        }
-
-        if (branchName.equals("master") || branchName.startsWith("branch-")) {
             try {
-                stage 'Run long integration tests (community)'
-                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community,only-long-running-test -e"
+                stage 'Run integration tests (community)'
+                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community -e"
             } finally {
                 step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
             }
 
             try {
-                stage 'Run long integration tests (premium)'
-                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium,only-long-running-test -e"
+                stage 'Run integration tests (premium)'
+                sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium -e"
             } finally {
                 step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
             }
-        } else {
-            echo 'Skip long running integration tests'
-        }
 
-    } finally {
-        // if tests fail - unlock the lock anyway
-        sh "tools/unlock.sh /tmp/integration-tests.lock \"$lockMessage\""
+            if (branchName.equals("master") || branchName.startsWith("branch-")) {
+                try {
+                    stage 'Run long integration tests (community)'
+                    sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-community,only-long-running-test -e"
+                } finally {
+                    step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
+                }
+
+                try {
+                    stage 'Run long integration tests (premium)'
+                    sh "mvn clean verify -pl insightedge-integration-tests -P run-integration-tests-premium,only-long-running-test -e"
+                } finally {
+                    step([$class: 'JUnitResultArchiver', testResults: 'insightedge-integration-tests/target/surefire-reports/TEST-*.xml'])
+                }
+            } else {
+                echo 'Skip long running integration tests'
+            }
+
+        } finally {
+            // if tests fail - unlock the lock anyway
+            sh "tools/unlock.sh /tmp/integration-tests.lock \"$lockMessage\""
+        }
     }
 }
