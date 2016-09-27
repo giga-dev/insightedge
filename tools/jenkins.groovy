@@ -23,9 +23,7 @@ def String calcBuildNumber() {
 
 def String calcBranch() {
     sh 'git branch --remote --verbose --no-abbrev --contains | sed -rne \'s/^[^\\/]*\\/([^\\ ]+).*$/\\1/p\' > temp-git-branch'
-    String branch = readFile("temp-git-branch").trim()
-    echo "Calculated branch: " + branch
-    return branch
+    return readFile("temp-git-branch").trim()
 }
 
 String branchName = calcBranch()
