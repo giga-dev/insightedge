@@ -22,11 +22,10 @@ def String calcBuildNumber() {
 }
 
 def String calcBranch() {
-    String branch = "$env.BRANCH_NAME".toString()
-    if (branch == null) {
-        branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
-    }
-    return branch;
+    sh 'git rev-parse --abbrev-ref HEAD > temp-git-branch'
+    String branch = readFile("temp-git-branch").trim()
+    echo "Calculated branch: " + branch
+    return branch
 }
 
 String branchName = calcBranch()
