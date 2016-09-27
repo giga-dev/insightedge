@@ -21,7 +21,15 @@ def String calcBuildNumber() {
     return INSIGHTEDGE_BUILD_NUMBER + "-" + "$env.BUILD_NUMBER".toString()
 }
 
-String branchName = "$env.BRANCH_NAME".toString()
+def String calcBranch() {
+    String branch = "$env.BRANCH_NAME".toString()
+    if (branch == null) {
+        branch = sh(returnStdout: true, script: 'git rev-parse --abbrev-ref HEAD').trim()
+    }
+    return branch;
+}
+
+String branchName = calcBranch()
 String xapOpenUrl = XAP_OPEN_URL
 String xapPremiumUrl = XAP_PREMIUM_URL
 String buildNumber = calcBuildNumber()
